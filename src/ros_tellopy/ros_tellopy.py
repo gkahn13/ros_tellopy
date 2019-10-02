@@ -3,10 +3,10 @@ import numpy as np
 import threading
 import time
 
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Vector3Stamped
 import rospy
 import ros_numpy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Imu
 from std_msgs.msg import Empty
 
 from ros_tellopy.msg import TelloState
@@ -15,21 +15,24 @@ from tellopy import Tello
 
 class ROSTellopy(object):
 
-    def __init__(self, video_enabled=True, rate=30.):
+    def __init__(self, video_enabled=True, rate=20.):
         self._video_enabled = video_enabled
         self._rate = rate
 
         ### Tello
 
         self._tello_lock = threading.RLock()
-        from unittest import mock
-        # self._tello = mock.Mock()
-        self._tello = Tello() # TODO
+        self._tello = Tello()
+        self._tello.set_loglevel(Tello.LOG_ERROR)
         self._tello.connect()
         self._tello.wait_for_connection()
 
+        import IPython; IPython.embed(); import sys; sys.exit(0)
+
         self._tello_flight_data_seq = 0
         self._tello.subscribe(self._tello.EVENT_FLIGHT_DATA, self._tello_flight_data_callback)
+        self._tello_log_data_seq = 0
+        self._tello.subscribe(self._tello.EVENT_LOG_DATA, self._tello_log_data_callback)
 
         ### ROS publishers
 
@@ -42,6 +45,9 @@ class ROSTellopy(object):
             self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
 
         self._state_pub = rospy.Publisher('state', TelloState, queue_size=1)
+        self._imu_pub = rospy.Publisher('imu', Imu, queue_size=1)
+        self._position_pub = rospy.Publisher('position', Vector3Stamped, queue_size=1)
+        self._velocity_pub = rospy.Publisher('velocity', Vector3Stamped, queue_size=1)
 
         ### ROS subscribers
 
@@ -94,6 +100,45 @@ class ROSTellopy(object):
         self._tello_flight_data_seq += 1
 
         self._state_pub.publish(msg)
+
+    def _tello_log_data_callback(self, event, sender, data, **args):
+        stamp = rospy.Time.now()
+
+        imu_msg = Imu()
+        imu_msg.header.stamp = stamp
+        imu_msg.header.seq = self._tello_log_data_seq
+        imu_msg.orientation.w = data.imu.q0
+        imu_msg.orientation.x = data.imu.q1
+        imu_msg.orientation.y = data.imu.q2
+        imu_msg.orientation.z = data.imu.q3
+        imu_msg.angular_velocity.x = data.imu.gyro_x
+        imu_msg.angular_velocity.y = data.imu.gyro_y
+        imu_msg.angular_velocity.z = data.imu.gyro_z
+        imu_msg.linear_acceleration.x = data.imu.acc_x
+        imu_msg.linear_acceleration.y = data.imu.acc_y
+        imu_msg.linear_acceleration.z = data.imu.acc_z
+
+        pos_msg = Vector3Stamped()
+        pos_msg.header.stamp = stamp
+        pos_msg.header.seq = self._tello_log_data_seq
+        pos_msg.vector.x = data.mvo.pos_x
+        pos_msg.vector.y = data.mvo.pos_y
+        pos_msg.vector.z = data.mvo.pos_z
+
+        vel_msg = Vector3Stamped()
+        vel_msg.header.stamp = stamp
+        vel_msg.header.seq = self._tello_log_data_seq
+        vel_msg.vector.x = data.mvo.vel_x
+        vel_msg.vector.y = data.mvo.vel_y
+        vel_msg.vector.z = data.mvo.vel_z
+
+        self._imu_pub.publish(imu_msg)
+        self._position_pub.publish(pos_msg)
+        self._velocity_pub.publish(vel_msg)
+        self._tello_log_data_seq += 1
+
+        # print('')
+        # print(str(data))
 
     ###################
     ### ROS threads ###

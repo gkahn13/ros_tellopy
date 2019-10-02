@@ -109,6 +109,45 @@ class Tello(object):
         """
         log.set_level(level)
 
+    ############################
+    ### Connect / Disconnect ###
+    ############################
+
+    def connect(self):
+        """Connect is used to send the initial connection request to the drone."""
+        self.__publish(event=self.__EVENT_CONN_REQ)
+
+    def wait_for_connection(self, timeout=None):
+        """Wait_for_connection will block until the connection is established."""
+        if not self.connected.wait(timeout):
+            raise error.TelloError('timeout')
+
+    def quit(self):
+        """Quit stops the internal threads."""
+        log.info('quit')
+        self.__publish(event=self.__EVENT_QUIT_REQ)
+
+    #################
+    ### Callbacks ###
+    #################
+
+    def subscribe(self, signal, handler):
+        """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
+        dispatcher.connect(handler, signal)
+
+    def __publish(self, event, data=None, **args):
+        args.update({'data': data})
+        if 'signal' in args:
+            del args['signal']
+        if 'sender' in args:
+            del args['sender']
+        log.debug('publish signal=%s, args=%s' % (event, args))
+        dispatcher.send(event, sender=self, **args)
+
+    #############
+    ### Video ###
+    #############
+
     def get_video_stream(self):
         """
         Get_video_stream is used to prepare buffer object which receive video data from the drone.
@@ -129,89 +168,6 @@ class Tello(object):
             self.start_video()
 
         return res
-
-    def connect(self):
-        """Connect is used to send the initial connection request to the drone."""
-        self.__publish(event=self.__EVENT_CONN_REQ)
-
-    def wait_for_connection(self, timeout=None):
-        """Wait_for_connection will block until the connection is established."""
-        if not self.connected.wait(timeout):
-            raise error.TelloError('timeout')
-
-    def __send_conn_req(self):
-        port = 9617
-        port0 = (int(port/1000) % 10) << 4 | (int(port/100) % 10)
-        port1 = (int(port/10) % 10) << 4 | (int(port/1) % 10)
-        buf = 'conn_req:%c%c' % (chr(port0), chr(port1))
-        log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
-        return self.send_packet(Packet(buf))
-
-    def subscribe(self, signal, handler):
-        """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
-        dispatcher.connect(handler, signal)
-
-    def __publish(self, event, data=None, **args):
-        args.update({'data': data})
-        if 'signal' in args:
-            del args['signal']
-        if 'sender' in args:
-            del args['sender']
-        log.debug('publish signal=%s, args=%s' % (event, args))
-        dispatcher.send(event, sender=self, **args)
-
-    def takeoff(self):
-        """Takeoff tells the drones to liftoff and start flying."""
-        log.info('set altitude limit 30m')
-        pkt = Packet(SET_ALT_LIMIT_CMD)
-        pkt.add_byte(0x1e)  # 30m
-        pkt.add_byte(0x00)
-        self.send_packet(pkt)
-        log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
-        pkt = Packet(TAKEOFF_CMD)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def throw_and_go(self):
-        """Throw_and_go starts a throw and go sequence"""
-        log.info('throw_and_go (cmd=0x%02x seq=0x%04x)' % (THROW_AND_GO_CMD, self.pkt_seq_num))
-        pkt = Packet(THROW_AND_GO_CMD, 0x48)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def land(self):
-        """Land tells the drone to come in for landing."""
-        log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
-        pkt = Packet(LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def estop(self):
-        # TODO: untested
-        self.sock.sendto('emergency'.encode('utf-8'), self.tello_addr)
-
-    def palm_land(self):
-        """Tells the drone to wait for a hand underneath it and then land."""
-        log.info('palmland (cmd=0x%02x seq=0x%04x)' % (PALM_LAND_CMD, self.pkt_seq_num))
-        pkt = Packet(PALM_LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def quit(self):
-        """Quit stops the internal threads."""
-        log.info('quit')
-        self.__publish(event=self.__EVENT_QUIT_REQ)
-
-    def __send_time_command(self):
-        log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
-        pkt = Packet(TIME_CMD, 0x50)
-        pkt.add_byte(0)
-        pkt.add_time()
-        pkt.fixup()
-        return self.send_packet(pkt)
 
     def __send_start_video(self):
         pkt = Packet(VIDEO_START_CMD, 0x60)
@@ -267,9 +223,36 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
-    def take_picture(self):
-        log.info('take picture')
-        return self.send_packet_data(TAKE_PICTURE_COMMAND, type=0x68)
+    ######################
+    ### Takeoff / land ###
+    ######################
+
+    def takeoff(self):
+        """Takeoff tells the drones to liftoff and start flying."""
+        log.info('set altitude limit 30m')
+        pkt = Packet(SET_ALT_LIMIT_CMD)
+        pkt.add_byte(0x1e)  # 30m
+        pkt.add_byte(0x00)
+        self.send_packet(pkt)
+        log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
+        pkt = Packet(TAKEOFF_CMD)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def land(self):
+        """Land tells the drone to come in for landing."""
+        log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
+        pkt = Packet(LAND_CMD)
+        pkt.add_byte(0x00)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def estop(self):
+        self.sock.sendto('emergency'.encode('utf-8'), self.tello_addr)
+
+    #########################
+    ### Movement commands ###
+    #########################
 
     def up(self, val):
         """Up tells the drone to ascend. Pass in an int from 0-100."""
@@ -317,77 +300,6 @@ class Tello(object):
         log.info('counter_clockwise(val=%d)' % val)
         self.left_x = val / 100.0 * -1
 
-    def flip_forward(self):
-        """flip_forward tells the drone to perform a forwards flip"""
-        log.info('flip_forward (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipFront)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_back(self):
-        """flip_back tells the drone to perform a backwards flip"""
-        log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBack)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_right(self):
-        """flip_right tells the drone to perform a right flip"""
-        log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_left(self):
-        """flip_left tells the drone to perform a left flip"""
-        log.info('flip_left (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_forwardleft(self):
-        """flip_forwardleft tells the drone to perform a forwards left flip"""
-        log.info('flip_forwardleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_backleft(self):
-        """flip_backleft tells the drone to perform a backwards left flip"""
-        log.info('flip_backleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_forwardright(self):
-        """flip_forwardright tells the drone to perform a forwards right flip"""
-        log.info('flip_forwardright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def flip_backright(self):
-        """flip_backleft tells the drone to perform a backwards right flip"""
-        log.info('flip_backright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
-
-    def __fix_range(self, val, min=-1.0, max=1.0):
-        if val < min:
-            val = min
-        elif val > max:
-            val = max
-        return val
-
     def set_throttle(self, throttle):
         """
         Set_throttle controls the vertical up and down motion of the drone.
@@ -423,6 +335,25 @@ class Tello(object):
         if self.right_x != self.__fix_range(roll):
             log.info('set_roll(val=%4.2f)' % roll)
         self.right_x = self.__fix_range(roll)
+
+    def __fix_range(self, val, min=-1.0, max=1.0):
+        if val < min:
+            val = min
+        elif val > max:
+            val = max
+        return val
+
+    ###########
+    ### Get ###
+    ###########
+
+    def get_height(self):
+        # TODO
+        return self.sock.sendto('height?'.encode('utf-8'), self.tello_addr)
+
+    #################################
+    ### Communication and threads ###
+    #################################
 
     def __send_stick_command(self):
         pkt = Packet(STICK_CMD, 0x60)
@@ -607,13 +538,29 @@ class Tello(object):
             self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
             del self.file_recv[filenum]
 
-    def record_log_data(self, path = None):
+    def record_log_data(self, path=None):
         if path == None:
             path = '%s/Documents/tello-%s.dat' % (
                 os.getenv('HOME'),
                 datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S'))
         log.info('record log data in %s' % path)
         self.log_data_file = open(path, 'wb')
+
+    def __send_time_command(self):
+        log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
+        pkt = Packet(TIME_CMD, 0x50)
+        pkt.add_byte(0)
+        pkt.add_time()
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def __send_conn_req(self):
+        port = 9617
+        port0 = (int(port/1000) % 10) << 4 | (int(port/100) % 10)
+        port1 = (int(port/10) % 10) << 4 | (int(port/1) % 10)
+        buf = 'conn_req:%c%c' % (chr(port0), chr(port1))
+        log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
+        return self.send_packet(Packet(buf))
 
     def __state_machine(self, event, sender, data, **args):
         self.lock.acquire()
