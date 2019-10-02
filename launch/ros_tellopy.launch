@@ -1,0 +1,3 @@
+<launch>
+  <node pkg="ros_tellopy" type="ros_tellopy_node.py" name="ros_tellopy" output="screen"/>
+</launch>
