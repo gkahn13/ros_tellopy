@@ -82,14 +82,16 @@ class Tello(object):
 
         """
         with self._cmd_lock:
-            self._socket_cmd.sendto(command.encode('utf-8'), self.tello_address)
+            self._socket_cmd.sendto(command.encode('utf-8'),
+                                    (Tello.TELLO_IP, Tello.CMD_PORT))
 
             start_time = time.time()
             while self._cmd_response is None:
                 if time.time() - start_time > self._cmd_timeout:
                     break
 
-            success =  (self._cmd_response.lower() == 'ok')
+            success =  (self._cmd_response is not None and
+                        self._cmd_response.lower() == 'ok')
             self._cmd_response = None
 
         return success
