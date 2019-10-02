@@ -14,8 +14,9 @@ from dji_tellopy.tello import Tello
 
 class ROSTellopyNode(object):
 
-    def __init__(self, rate=20.):
+    def __init__(self, rate=20., min_cmd_vel_freq=2.):
         self._rate = rate
+        self._min_cmd_vel_dt = 1. / min_cmd_vel_freq
 
         ### Tello
 
@@ -30,10 +31,11 @@ class ROSTellopyNode(object):
         rospy.Subscriber('land', Empty, self._land_callback)
         rospy.Subscriber('estop', Empty, self._estop_callback)
         self._cmd_vel = Twist()
+        self._cmd_vel_stamp = rospy.Time.now()
         rospy.Subscriber('cmd_vel', Twist, self._cmd_vel_callback)
 
         ### background threads
-        threading.Thread(target=self._keep_alive_thread).start()
+        threading.Thread(target=self._cmd_vel_thread).start()
 
     ###################
     ### ROS threads ###
@@ -49,23 +51,32 @@ class ROSTellopyNode(object):
         self._tello.estop()
 
     def _cmd_vel_callback(self, msg):
+        self._cmd_vel = msg
+        self._cmd_vel_stamp = rospy.Time.now()
+        self._cmd_vel_thread_step(self._cmd_vel)
+
+    ###############
+    ### Threads ###
+    ###############
+
+    def _cmd_vel_thread(self):
+        rate = rospy.Rate(10.)
+        while not rospy.is_shutdown():
+            rate.sleep()
+
+            if (rospy.Time.now() - self._cmd_vel_stamp).to_sec() < self._min_cmd_vel_dt:
+                msg = self._cmd_vel
+            else:
+                msg = Twist()
+            self._cmd_vel_thread_step(msg)
+
+    def _cmd_vel_thread_step(self, msg):
         vx = msg.linear.x
         vy = msg.linear.y
         vz = msg.linear.z
         vyaw = msg.angular.z
 
         self._tello.set_velocity(vx, vy, vz, vyaw)
-
-    ###############
-    ### Threads ###
-    ###############
-
-    def _keep_alive_thread(self):
-        rate = rospy.Rate(0.1)
-        while not rospy.is_shutdown():
-            self._cmd_vel_callback(self._cmd_vel)
-
-            rate.sleep()
 
     ###########
     ### Run ###
