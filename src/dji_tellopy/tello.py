@@ -50,7 +50,8 @@ class Tello:
         client_socket=None,
         enable_exceptions=True,
         retry_count=3,
-        state_callback_fn=None):
+        state_callback_fn=None,
+        is_send_control_command_without_return=False):
 
         self.address = (host, port)
         self.response = None
@@ -59,6 +60,7 @@ class Tello:
         self.enable_exceptions = enable_exceptions
         self.retry_count = retry_count
         self.state_callback_fn = state_callback_fn
+        self.is_send_control_command_without_return = is_send_control_command_without_return
 
         if client_socket:
             self.clientSocket = client_socket
@@ -368,6 +370,9 @@ class Tello:
         Return:
             bool: True for successful, False for unsuccessful
         """
+        if self.is_send_control_command_without_return:
+            self.send_command_without_return(command)
+            return True
 
         for i in range(0, self.retry_count):
             response = self.send_command_with_return(command)

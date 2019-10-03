@@ -36,7 +36,10 @@ class ROSTellopyNode(object):
 
         ### Tello
         self._is_flying = False
-        self._tello = Tello(enable_exceptions=False, state_callback_fn=self._state_callback_fn)
+        self._tello_lock = threading.RLock()
+        self._tello = Tello(enable_exceptions=False,
+                            state_callback_fn=self._state_callback_fn,
+                            is_send_control_command_without_return=True)
         self._tello.connect()
         self._tello.streamon()
 
@@ -54,15 +57,18 @@ class ROSTellopyNode(object):
     ###################
 
     def _takeoff_callback(self, msg):
-        self._tello.takeoff()
+        with self._tello_lock:
+            self._tello.takeoff()
         self._is_flying = True
 
     def _land_callback(self, msg):
         self._is_flying = False
-        self._tello.land()
+        with self._tello_lock:
+            self._tello.land()
 
     def _estop_callback(self, msg):
-        self._tello.emergency()
+        with self._tello_lock:
+            self._tello.emergency()
 
     def _cmd_callback(self, msg):
         self._cmd = msg
@@ -99,17 +105,18 @@ class ROSTellopyNode(object):
         height_error = self._state_msg.height - height
         vz = np.clip(-1. * height_error, -0.2, 0.2)
 
-        self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
-                                    left_right_velocity=int(100 * vy),
-                                    up_down_velocity=int(100 * vz),
-                                    yaw_velocity=int(100 * vyaw))
+        with self._tello_lock:
+            self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
+                                        left_right_velocity=int(100 * vy),
+                                        up_down_velocity=int(100 * vz),
+                                        yaw_velocity=int(100 * vyaw))
 
     def _video_thread(self):
         container = av.open(self._tello.get_udp_video_address())
 
         frame_skip = 300
         seq = 0
-        while True:
+        while not rospy.is_shutdown():
             for frame in container.decode(video=0):
                 if 0 < frame_skip:
                     frame_skip = frame_skip - 1
