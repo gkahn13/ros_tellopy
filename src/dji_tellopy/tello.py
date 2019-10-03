@@ -69,9 +69,13 @@ class Tello(object):
         """
         while True:
             try:
+                # print('receiving....')
                 self._cmd_response, ip = self._socket_cmd.recvfrom(3000)
-            except socket.error as exc:
-                print ("Caught exception socket.error : %s" % exc)
+                # print('response: {0}'.format(self._cmd_response))
+            except Exception:
+                pass
+            # except socket.error as exc:
+            #     print ("Caught exception socket.error : %s" % exc)
 
     def _send_command(self, command):
         """
@@ -90,6 +94,7 @@ class Tello(object):
                 if time.time() - start_time > self._cmd_timeout:
                     break
 
+            # print('response: {0}'.format(self._cmd_response))
             success =  (self._cmd_response is not None and
                         self._cmd_response.lower() == 'ok')
             self._cmd_response = None
@@ -138,7 +143,7 @@ class Tello(object):
         vy_cm_s = int(100 * vy)
         vz_cm_s = int(100 * vz)
         vyaw_deg_s = int(np.rad2deg(vyaw))
-        
+
         return self._send_command('rc {vy:d} {vx:d} {vz:d} {vyaw:d}'.format(
             vx=vx_cm_s, vy=vy_cm_s, vz=vz_cm_s, vyaw=vyaw_deg_s
         ))
