@@ -1,7 +1,0 @@
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/install/strip.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/edit_cache.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/h264decoder.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/rebuild_cache.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/list_install_components.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/install/local.dir
-/home/gkahn/catkin_ws/src/ros_tellopy/src/dji_tellopy/h264decoder/build/CMakeFiles/install.dir

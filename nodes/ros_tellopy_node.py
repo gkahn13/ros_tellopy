@@ -12,7 +12,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Empty, Float32
 
 from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
-from djitellopy import Tello
+from dji_tellopy import Tello
 
 
 class ROSTellopyNode(object):
