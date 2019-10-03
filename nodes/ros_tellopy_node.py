@@ -5,23 +5,24 @@ import numpy as np
 import threading
 import time
 
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Vector3
 import rospy
 import ros_numpy
 from sensor_msgs.msg import Image
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, Float32
 
-from ros_tellopy.msg import RollPitchYaw, TelloState
+from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
 from djitellopy import Tello
 
 
 class ROSTellopyNode(object):
 
-    def __init__(self, min_cmd_vel_freq=2.):
-        self._min_cmd_vel_dt = 1. / min_cmd_vel_freq
+    def __init__(self, min_cmd_freq=2.):
+        self._min_cmd_dt = 1. / min_cmd_freq
 
         ### ROS publishers
         self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
+        self._state_msg = TelloState()
         self._state_seq = 0
         self._state_pub = rospy.Publisher('state', TelloState, queue_size=1)
 
@@ -29,9 +30,9 @@ class ROSTellopyNode(object):
         rospy.Subscriber('takeoff', Empty, self._takeoff_callback)
         rospy.Subscriber('land', Empty, self._land_callback)
         rospy.Subscriber('estop', Empty, self._estop_callback)
-        self._cmd_vel = Twist()
-        self._cmd_vel_stamp = rospy.Time.now()
-        rospy.Subscriber('cmd_vel', Twist, self._cmd_vel_callback)
+        self._cmd = self._default_cmd
+        self._cmd_stamp = rospy.Time.now()
+        rospy.Subscriber('cmd', CmdTello, self._cmd_callback)
 
         ### Tello
         self._is_flying = False
@@ -40,9 +41,9 @@ class ROSTellopyNode(object):
         self._tello.streamon()
 
         ### background threads
-        cmd_vel_thread = threading.Thread(target=self._cmd_vel_thread)
-        cmd_vel_thread.daemon = True
-        cmd_vel_thread.start()
+        cmd_thread = threading.Thread(target=self._cmd_thread)
+        cmd_thread.daemon = True
+        cmd_thread.start()
 
         video_thread = threading.Thread(target=self._video_thread)
         video_thread.daemon = True
@@ -63,33 +64,40 @@ class ROSTellopyNode(object):
     def _estop_callback(self, msg):
         self._tello.emergency()
 
-    def _cmd_vel_callback(self, msg):
-        self._cmd_vel = msg
-        self._cmd_vel_stamp = rospy.Time.now()
-        self._cmd_vel_thread_step(self._cmd_vel)
+    def _cmd_callback(self, msg):
+        self._cmd = msg
+        self._cmd_stamp = rospy.Time.now()
+        self._cmd_thread_step(self._cmd)
 
     ###############
     ### Threads ###
     ###############
 
-    def _cmd_vel_thread(self):
+    @property
+    def _default_cmd(self):
+        return CmdTello(vx=0., vy=0., vyaw=0., height=self._state_msg.height)
+
+    def _cmd_thread(self):
         rate = rospy.Rate(0.25)
         while not rospy.is_shutdown():
             rate.sleep()
 
-            if (rospy.Time.now() - self._cmd_vel_stamp).to_sec() < self._min_cmd_vel_dt:
-                msg = self._cmd_vel
+            if (rospy.Time.now() - self._cmd_stamp).to_sec() < self._min_cmd_dt:
+                msg = self._cmd
             else:
-                msg = Twist()
-            self._cmd_vel_thread_step(msg)
+                msg = self._default_cmd
+            self._cmd_thread_step(msg)
 
-    def _cmd_vel_thread_step(self, msg):
+    def _cmd_thread_step(self, msg):
         if not self._is_flying:
             return
-        vx = msg.linear.x
-        vy = msg.linear.y
-        vz = msg.linear.z
-        vyaw = msg.angular.z
+        vx = msg.vx
+        vy = msg.vy
+        height = msg.height
+        vyaw = msg.vyaw
+
+        height_error = self._state_msg.height - height
+        vz = np.clip(-1. * height_error, -0.2, 0.2)
 
         self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
                                     left_right_velocity=int(100 * vy),
@@ -151,6 +159,7 @@ class ROSTellopyNode(object):
             )
             state_msg.header.stamp = rospy.Time.now()
             state_msg.header.seq = self._state_seq
+            self._state_msg = state_msg
             self._state_pub.publish(state_msg)
 
             self._state_seq += 1
