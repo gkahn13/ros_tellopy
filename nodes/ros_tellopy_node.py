@@ -8,23 +8,34 @@ import time
 from geometry_msgs.msg import Vector3
 import rospy
 import ros_numpy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Empty, Float32
 
 from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
 from dji_tellopy import Tello
+import sys
+import cv_bridge
+from cv_bridge import CvBridge
+sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
+import cv2
+
+
 
 
 class ROSTellopyNode(object):
 
-    def __init__(self, min_cmd_freq=2.):
+    def __init__(self, min_cmd_freq=10.):
         self._min_cmd_dt = 1. / min_cmd_freq
 
         ### ROS publishers
-        self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
+        self._camera_pub = rospy.Publisher('camera', CompressedImage, queue_size=1)
+        #self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
         self._state_msg = TelloState()
         self._state_seq = 0
         self._state_pub = rospy.Publisher('state', TelloState, queue_size=1)
+        
+        self.bridge = CvBridge()
+        
 
         ### ROS subscribers
         rospy.Subscriber('takeoff', Empty, self._takeoff_callback)
@@ -51,6 +62,7 @@ class ROSTellopyNode(object):
         video_thread = threading.Thread(target=self._video_thread)
         video_thread.daemon = True
         video_thread.start()
+        
 
     ###################
     ### ROS threads ###
@@ -60,15 +72,18 @@ class ROSTellopyNode(object):
         with self._tello_lock:
             self._tello.takeoff()
         self._is_flying = True
+        print("takeoff")
 
     def _land_callback(self, msg):
         self._is_flying = False
         with self._tello_lock:
             self._tello.land()
+        print("land")
 
     def _estop_callback(self, msg):
         with self._tello_lock:
             self._tello.emergency()
+        print("estop")
 
     def _cmd_callback(self, msg):
         self._cmd = msg
@@ -97,6 +112,7 @@ class ROSTellopyNode(object):
     def _cmd_thread_step(self, msg):
         if not self._is_flying:
             return
+
         vx = msg.vx
         vy = msg.vy
         height = msg.height
@@ -104,7 +120,7 @@ class ROSTellopyNode(object):
 
         height_error = self._state_msg.height - height
         vz = np.clip(-1. * height_error, -0.2, 0.2)
-
+        print(vyaw)
         with self._tello_lock:
             self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
                                         left_right_velocity=int(100 * vy),
@@ -122,12 +138,17 @@ class ROSTellopyNode(object):
                     frame_skip = frame_skip - 1
                     continue
                 start_time = time.time()
-
+                
+                '''
                 image = np.array(frame.to_image())
                 image_msg = ros_numpy.msgify(Image, image, encoding='rgb8')
                 image_msg.header.stamp = rospy.Time.now()
                 image_msg.header.seq = seq
-                self._camera_pub.publish(image_msg)
+                self._camera_pub.publish(image_msg)'''
+                
+                #cv2.imshow('Window', np.array(frame.to_image()))
+                #cv2.waitKey(3)
+                self._camera_pub.publish(self.bridge.cv2_to_compressed_imgmsg(np.array(frame.to_image())))
 
                 if frame.time_base < 1.0/60:
                     time_base = 1.0/60
@@ -139,6 +160,7 @@ class ROSTellopyNode(object):
 
     def _state_callback_fn(self, response):
         try:
+            response = response.decode("utf-8")
             names_and_value_strs = ' '.join(response.replace(';', ' ').split()).split()
             d = dict()
             for name_and_value_str in names_and_value_strs:
@@ -170,8 +192,8 @@ class ROSTellopyNode(object):
             self._state_pub.publish(state_msg)
 
             self._state_seq += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print(e)
 
     ###########
     ### Run ###
@@ -180,6 +202,9 @@ class ROSTellopyNode(object):
     def run(self):
         rospy.spin()
 
+
+
+        
 
 rospy.init_node('ROSTello', anonymous=True)
 node = ROSTellopyNode()
