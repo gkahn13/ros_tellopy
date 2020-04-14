@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   geometry_msgs
+  crazyflie
   message_generation
 )
 
@@ -111,6 +112,7 @@ catkin_package(
 #  LIBRARIES ros_tellopy
 #  CATKIN_DEPENDS roscpp rospy std_msgs
 #  DEPENDS system_lib
+  CATKIN_DEPENDS message_runtime
 )
 
 ###########
@@ -201,3 +203,12 @@ include_directories(
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
+
+# add_dependencies(ros_tellopy ${catkin_EXPORTED_TARGETS})
+
+
+catkin_install_python(PROGRAMS nodes/joy_teleop_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS nodes/ros_tellopy_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

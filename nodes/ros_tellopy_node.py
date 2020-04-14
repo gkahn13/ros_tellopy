@@ -4,37 +4,46 @@ import av
 import numpy as np
 import threading
 import time
+import signal
+import sys
 
 from geometry_msgs.msg import Vector3
 import rospy
 import ros_numpy
-from sensor_msgs.msg import Image
-from std_msgs.msg import Empty, Float32
+from sensor_msgs.msg import Image, CompressedImage
 
-from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
-from dji_tellopy import Tello
+from ros_tellopy import Tello
 
+from crazyflie.msg import CFMotion, CFCommand, CFData
 
 class ROSTellopyNode(object):
 
-    def __init__(self, min_cmd_freq=2.):
-        self._min_cmd_dt = 1. / min_cmd_freq
+    def __init__(self, dt=0.05, config="None"):
+        self._dt = dt # rate at which states are published
+
+        self._ros_prefix = "/cf/0/"
+        self._ext_config = config
+
+        self._alt = 0.6
+        self._height_lims = [0.15, 1.2]
 
         ### ROS publishers
-        self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
-        self._state_msg = TelloState()
-        self._state_seq = 0
-        self._state_pub = rospy.Publisher('state', TelloState, queue_size=1)
+        self._camera_pub = rospy.Publisher(self._ros_prefix + 'image', Image, queue_size=1)
+        # self._camera_compressed_pub = rospy.Publisher(self._ros_prefix + 'image', CompressedImage, queue_size=1)
+        self._state_pub = rospy.Publisher(self._ros_prefix + 'data', CFData, queue_size=10)
 
         ### ROS subscribers
-        rospy.Subscriber('takeoff', Empty, self._takeoff_callback)
-        rospy.Subscriber('land', Empty, self._land_callback)
-        rospy.Subscriber('estop', Empty, self._estop_callback)
-        self._cmd = self._default_cmd
-        self._cmd_stamp = rospy.Time.now()
-        rospy.Subscriber('cmd', CmdTello, self._cmd_callback)
+        rospy.Subscriber(self._ros_prefix + 'command', CFCommand, self._cmd_callback)
+        rospy.Subscriber(self._ros_prefix + 'extra_command', CFCommand, self._extra_cmd_callback)
+        rospy.Subscriber(self._ros_prefix + 'motion', CFMotion, self._motion_callback)
+
+        ### cb state
+        self._state_msg = None
+        self._state_seq = 0
+        self._motion = self._default_motion
 
         ### Tello
+        self._seq_running = False
         self._is_flying = False
         self._tello_lock = threading.RLock()
         self._tello = Tello(enable_exceptions=False,
@@ -42,11 +51,12 @@ class ROSTellopyNode(object):
                             is_send_control_command_without_return=True)
         self._tello.connect()
         self._tello.streamon()
+        print("[Tello] Starting.")
 
         ### background threads
-        cmd_thread = threading.Thread(target=self._cmd_thread)
-        cmd_thread.daemon = True
-        cmd_thread.start()
+        motion_thread = threading.Thread(target=self._motion_thread)
+        motion_thread.daemon = True
+        motion_thread.start()
 
         video_thread = threading.Thread(target=self._video_thread)
         video_thread.daemon = True
@@ -56,54 +66,119 @@ class ROSTellopyNode(object):
     ### ROS threads ###
     ###################
 
-    def _takeoff_callback(self, msg):
+    def _takeoff_callback(self):
         with self._tello_lock:
             self._tello.takeoff()
         self._is_flying = True
 
-    def _land_callback(self, msg):
+    def _land_callback(self):
         self._is_flying = False
         with self._tello_lock:
             self._tello.land()
 
-    def _estop_callback(self, msg):
+    def _estop_callback(self):
         with self._tello_lock:
             self._tello.emergency()
 
     def _cmd_callback(self, msg):
-        self._cmd = msg
-        self._cmd_stamp = rospy.Time.now()
-        self._cmd_thread_step(self._cmd)
+        if msg.cmd == CFCommand.ESTOP:
+            print("[Tello] ESTOP")
+            self._estop_callback()
+        elif msg.cmd == CFCommand.TAKEOFF:
+            print("[Tello] TAKEOFF")
+            self._takeoff_callback()
+        elif msg.cmd == CFCommand.LAND:
+            print("[Tello] LAND")
+            self._land_callback()
+        else:
+            print("[Tello] Unrecognized command: %d" % msg.cmd)
+
+    def _extra_cmd_callback(self, msg):
+        # perform seq manuever:
+        if self._seq_running:
+            print("Skipping extra cmd")
+        self._seq_running = True
+
+        rate = rospy.Rate(1/self._dt)
+
+        i = 0
+        while i < 35 and not rospy.is_shutdown():
+            motion = CFMotion()
+            motion.is_flow_motion = True
+            motion.x = 0.25
+            motion.y = 0
+            motion.dz = 0 if i < 30 else np.exp(np.sqrt(i) / 10.) - 1
+
+            self._motion_thread_step(motion)
+            i += 1
+
+            rate.sleep()
+
+        motion = self._default_motion
+        self._motion_thread_step(motion)
+
+        self._seq_running = False
+
+
+
+    def _motion_callback(self, msg):
+        self._motion = msg
+
+        if not self._seq_running:
+            self._motion_thread_step(self._motion)
 
     ###############
     ### Threads ###
     ###############
 
     @property
-    def _default_cmd(self):
-        return CmdTello(vx=0., vy=0., vyaw=0., height=self._state_msg.height)
+    def _default_motion(self):
+        mot = CFMotion(x=0., y=0., yaw=0., dz=0)
+        mot.stamp.stamp = rospy.Time.now()
+        mot.is_flow_motion = True
+        return mot
 
-    def _cmd_thread(self):
-        rate = rospy.Rate(0.25)
+    # this publishes once every dt
+    def _motion_thread(self):
+        rate = rospy.Rate(1/self._dt)
         while not rospy.is_shutdown():
+
+            # if self._motion is not None:
+            #     self._motion_thread_step(self._motion)
+
+            # state message publisher
+            if self._state_msg is not None:
+                self._state_msg.stamp.seq = self._state_seq
+                self._state_seq += 1
+                self._state_pub.publish(self._state_msg)
+
             rate.sleep()
 
-            if (rospy.Time.now() - self._cmd_stamp).to_sec() < self._min_cmd_dt:
-                msg = self._cmd
-            else:
-                msg = self._default_cmd
-            self._cmd_thread_step(msg)
-
-    def _cmd_thread_step(self, msg):
+    def _motion_thread_step(self, msg):
         if not self._is_flying:
             return
-        vx = msg.vx
-        vy = msg.vy
-        height = msg.height
-        vyaw = msg.vyaw
 
-        height_error = self._state_msg.height - height
-        vz = np.clip(-1. * height_error, -0.2, 0.2)
+        assert msg.is_flow_motion
+
+        vx = msg.x
+        vy = msg.y
+        vyaw = msg.yaw
+
+        vz = msg.dz
+
+        # original_alt = self._alt
+        # self._alt = np.clip(self._alt + msg.dz, *self._height_lims)
+
+        # if self._state_msg is not None:
+        #     true_alt = self._state_msg.alt
+
+        #     # bounding
+        #     if true_alt < self._height_lims[0] + 2e-2 and vz < 0:
+        #         vz = 0.
+        #     if true_alt > self._height_lims[1] - 2e-2 and vz > 0:
+        #         vz = 0.
+        # else:
+        #     vz = 0
 
         with self._tello_lock:
             self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
@@ -139,6 +214,7 @@ class ROSTellopyNode(object):
 
     def _state_callback_fn(self, response):
         try:
+            response = response.decode("utf-8")
             names_and_value_strs = ' '.join(response.replace(';', ' ').split()).split()
             d = dict()
             for name_and_value_str in names_and_value_strs:
@@ -156,22 +232,25 @@ class ROSTellopyNode(object):
                 'height': 0.01 * d['tof'] if d['tof'] < 6550 else 0.,
             }
 
-            state_msg = TelloState(
-                acceleration=Vector3(*state['acceleration']),
-                velocity=Vector3(*state['velocity']),
-                rpy=RollPitchYaw(*state['rpy']),
-                battery=state['battery'],
-                barometer=state['barometer'],
-                height=state['height']
+            state_msg = CFData(ext_config=self._ext_config, ID=0, 
+                            v_batt=state['battery'],
+                            alt=state['height'],
+                            roll=state['rpy'][0],
+                            pitch=state['rpy'][1],
+                            yaw=state['rpy'][2],
+                            accel_x=state['acceleration'][0],
+                            accel_y=state['acceleration'][1],
+                            accel_z=state['acceleration'][2],
+                            kalman_vx=state['velocity'][0],
+                            kalman_vy=state['velocity'][1],
+                            # kalman_vz=state['velocity'][2],
             )
-            state_msg.header.stamp = rospy.Time.now()
-            state_msg.header.seq = self._state_seq
-            self._state_msg = state_msg
-            self._state_pub.publish(state_msg)
 
-            self._state_seq += 1
-        except Exception:
-            pass
+            state_msg.stamp.stamp = rospy.Time.now() # keeping the accurate time
+            self._state_msg = state_msg
+
+        except Exception as e:
+            print("[Tello] FAILURE: %s" % e)
 
     ###########
     ### Run ###
@@ -180,10 +259,26 @@ class ROSTellopyNode(object):
     def run(self):
         rospy.spin()
 
+def signal_handler(sig, node):
+    print('You pressed Ctrl+C!')
+    node._estop_callback()
+    sys.exit(0)
 
-rospy.init_node('ROSTello', anonymous=True)
-node = ROSTellopyNode()
-try:
-    node.run()
-except KeyboardInterrupt:
-    print('Shutting down ros_tellopy_node.py')
+if __name__ == '__main__':
+    rospy.init_node('ros_tellopy', anonymous=True)
+    # import ipdb; ipdb.set_trace()
+
+    configParam = rospy.search_param("config")
+    dtParam = rospy.search_param("dt")
+    config = rospy.get_param(configParam, 'None')
+    dt = float(rospy.get_param(dtParam, '0.05'))
+    print("[Tello] Config: %s, dt: %f" % (config, dt))
+
+    node = ROSTellopyNode(dt=dt, config=config)
+
+    signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, node))
+
+    try:
+        node.run()
+    except KeyboardInterrupt:
+        print('[Tello] Shutting down ros_tellopy_node.py')

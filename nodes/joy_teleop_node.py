@@ -7,6 +7,8 @@ import rospy
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Empty
 
+from crazyflie.msg import CFCommand, CFMotion
+
 
 class JoyTeleopNode(object):
 
@@ -15,51 +17,97 @@ class JoyTeleopNode(object):
     RIGHT_AXIS_X = 2
     RIGHT_AXIS_Y = 3
     X_BUTTON = 0
-    L1_BUTTON = 4
-    R1_BUTTON = 5
+    SEQ_BUTTON = 2 #B
 
-    def __init__(self):
-        self._takeoff_pub = rospy.Publisher('takeoff', Empty, queue_size=1)
-        self._land_pub = rospy.Publisher('land', Empty, queue_size=1)
-        self._estop_pub = rospy.Publisher('estop', Empty, queue_size=1)
-        self._cmd_pub = rospy.Publisher('cmd', CmdTello, queue_size=1)
+    L1_BUTTON = 6
+    R1_BUTTON = 7
 
-        self._des_height = 0.8
-        self._height_lims = [0.4, 1.2]
+    PICKUP_BUTTON = 4
+    DROPOFF_BUTTON = 5
 
-        self._cmd = CmdTello()
+    def __init__(self, dt=0.1): # 10Hz default
+        self._ros_prefix = "/cf/0/"
+
+        self._cmd_pub = rospy.Publisher(self._ros_prefix + 'command', CFCommand, queue_size=1)
+        self._extra_cmd_pub = rospy.Publisher(self._ros_prefix + 'extra_command', CFCommand, queue_size=1)
+        self._mpc_extra_cmd_pub = rospy.Publisher(self._ros_prefix + 'mpc_extra_command', CFCommand, queue_size=1)
+        self._motion_pub = rospy.Publisher(self._ros_prefix + 'motion', CFMotion, queue_size=1)
+
+        self._dt = dt
+
+        self._motion = CFMotion()
+        self._motion.is_flow_motion=True
         rospy.Subscriber('/joy', Joy, self._joy_callback)
 
     def _joy_callback(self, msg):
+        pub = False
+
         if msg.buttons[JoyTeleopNode.X_BUTTON]:
-            self._estop_pub.publish(Empty())
+            pub = True; cmd = CFCommand.ESTOP
+
         elif msg.buttons[JoyTeleopNode.L1_BUTTON]:
-            self._land_pub.publish(Empty())
+            pub = True; cmd = CFCommand.LAND
+
         elif msg.buttons[JoyTeleopNode.R1_BUTTON]:
-            self._takeoff_pub.publish(Empty())
+            pub = True; cmd = CFCommand.TAKEOFF
 
-        cmd = CmdTello()
-        cmd.vx = msg.axes[JoyTeleopNode.RIGHT_AXIS_Y]
-        cmd.vy = -msg.axes[JoyTeleopNode.RIGHT_AXIS_X]
-        cmd.vyaw = -msg.axes[JoyTeleopNode.LEFT_AXIS_X]
-        dheight = 0.1 * msg.axes[JoyTeleopNode.LEFT_AXIS_Y]
-        cmd.height = self._des_height = np.clip(self._des_height + dheight, *self._height_lims)
+        if pub:
+            cmd_msg = CFCommand()
+            cmd_msg.cmd = cmd
+            cmd_msg.stamp.stamp = rospy.Time.now()
+            self._cmd_pub.publish(cmd_msg)
 
-        self._cmd = cmd
+        if msg.buttons[JoyTeleopNode.SEQ_BUTTON]:
+            cmd_msg2 = CFCommand()
+            cmd_msg2.cmd = CFCommand.TAKEOFF
+            cmd_msg2.stamp.stamp = rospy.Time.now()
+            self._extra_cmd_pub.publish(cmd_msg2)
+
+        if msg.buttons[JoyTeleopNode.PICKUP_BUTTON]:
+            cmd_msg3 = CFCommand()
+            cmd_msg3.cmd = CFCommand.TAKEOFF
+            cmd_msg3.stamp.stamp = rospy.Time.now()
+            self._mpc_extra_cmd_pub.publish(cmd_msg3)
+
+        elif msg.buttons[JoyTeleopNode.DROPOFF_BUTTON]:
+            cmd_msg3 = CFCommand()
+            cmd_msg3.cmd = CFCommand.LAND
+            cmd_msg3.stamp.stamp = rospy.Time.now()
+            self._mpc_extra_cmd_pub.publish(cmd_msg3)
+
+
+        # send control cmd (right now only vx, vy, vz is supported)
+        motion = CFMotion()
+        motion.is_flow_motion=True
+        motion.x = msg.axes[JoyTeleopNode.RIGHT_AXIS_Y]
+        motion.y = -msg.axes[JoyTeleopNode.RIGHT_AXIS_X]
+        motion.yaw = -msg.axes[JoyTeleopNode.LEFT_AXIS_X]
+        # dz here represents vz
+        motion.dz = msg.axes[JoyTeleopNode.LEFT_AXIS_Y] # 20cm per second max
+
+        self._motion = motion
 
     def run(self):
-        rate = rospy.Rate(20.)
+        rate = rospy.Rate(1./self._dt)
 
         while not rospy.is_shutdown():
+            # print("publishing")
+            self._motion_pub.publish(self._motion)
             rate.sleep()
 
-            self._cmd_pub.publish(self._cmd)
+if __name__ == '__main__':
+    rospy.init_node('joy_teleop', anonymous=True)
 
-rospy.init_node('JoyTeleopNode', anonymous=True)
+    usejoyParam = rospy.search_param("use_joy")
+    use_joy = bool(rospy.get_param(usejoyParam, 'True'))
 
-node = JoyTeleopNode()
-
-try:
-    node.run()
-except KeyboardInterrupt:
-    print('Shutting down ros_tellopy_node.py')
+    if not use_joy:
+        # we don't need to run anything
+        print("[JoyTeleop] Disabled.")
+    else:
+        print("[JoyTeleop] Starting.")
+        node = JoyTeleopNode()
+        try:
+            node.run()
+        except KeyboardInterrupt:
+            print('[JoyTeleop] Shutting down')

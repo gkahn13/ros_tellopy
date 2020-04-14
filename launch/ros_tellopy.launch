@@ -1,3 +1,5 @@
 <launch>
   <node pkg="ros_tellopy" type="ros_tellopy_node.py" name="ros_tellopy" output="screen"/>
+
+  <node name="republish" type="republish" pkg="image_transport" output="screen" args="raw in:=/tello/0/image compressed out:=/tello/0/image/compressed" />
 </launch>
