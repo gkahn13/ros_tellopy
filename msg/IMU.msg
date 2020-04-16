@@ -1,0 +1,13 @@
+float32 acc_x
+float32 acc_y
+float32 acc_z
+float32 gyro_x
+float32 gyro_y
+float32 gyro_z
+float32 q0
+float32 q1
+float32 q2
+float32 q3
+float32 vg_x
+float32 vg_y
+float32 vg_z

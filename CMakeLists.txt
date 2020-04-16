@@ -51,7 +51,9 @@ catkin_python_setup()
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
-  RollPitchYaw.msg
+  FlightData.msg
+  MVO.msg
+  IMU.msg
   TelloState.msg
   CmdTello.msg
 )

@@ -42,8 +42,9 @@ class JoyTeleopNode(object):
         cmd.vx = msg.axes[JoyTeleopNode.RIGHT_AXIS_Y]
         cmd.vy = -msg.axes[JoyTeleopNode.RIGHT_AXIS_X]
         cmd.vyaw = -msg.axes[JoyTeleopNode.LEFT_AXIS_X]
-        dheight = 0.1 * msg.axes[JoyTeleopNode.LEFT_AXIS_Y]
-        cmd.height = self._des_height = np.clip(self._des_height + dheight, *self._height_lims)
+        # dheight = 0.1 * msg.axes[JoyTeleopNode.LEFT_AXIS_Y]
+        # cmd.height = self._des_height = np.clip(self._des_height + dheight, *self._height_lims)
+        cmd.height = 0.2 * msg.axes[JoyTeleopNode.LEFT_AXIS_Y] # TODO
 
         self._cmd = cmd
 
