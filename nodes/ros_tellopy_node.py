@@ -12,7 +12,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Empty, Float32
 
 from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
-from ros_tellopy.tello import Tello
+from dji_tellopy import Tello
 
 
 class ROSTellopyNode(object):
@@ -36,14 +36,12 @@ class ROSTellopyNode(object):
 
         ### Tello
         self._is_flying = False
-        self._flight_data = None
-        self._log_data = None
         self._tello_lock = threading.RLock()
-        self._tello = Tello()
-        # self._tello.set_loglevel(Tello.LOG_ERROR)
-        self._tello.subscribe(Tello.EVENT_FLIGHT_DATA, self._flight_data_callback_fn) # slow
-        self._tello.subscribe(Tello.EVENT_LOG_DATA, self._log_data_callback_fn)  # fast
+        self._tello = Tello(enable_exceptions=False,
+                            state_callback_fn=self._state_callback_fn,
+                            is_send_control_command_without_return=True)
         self._tello.connect()
+        self._tello.streamon()
 
         ### background threads
         cmd_thread = threading.Thread(target=self._cmd_thread)
@@ -69,9 +67,8 @@ class ROSTellopyNode(object):
             self._tello.land()
 
     def _estop_callback(self, msg):
-        self._is_flying = False
         with self._tello_lock:
-            self._tello.land() # TODO: no e-stop command
+            self._tello.emergency()
 
     def _cmd_callback(self, msg):
         self._cmd = msg
@@ -84,7 +81,7 @@ class ROSTellopyNode(object):
 
     @property
     def _default_cmd(self):
-        return CmdTello(vx=0., vy=0., vyaw=0., height=0.0) # TODO
+        return CmdTello(vx=0., vy=0., vyaw=0., height=self._state_msg.height)
 
     def _cmd_thread(self):
         rate = rospy.Rate(0.25)
@@ -105,18 +102,17 @@ class ROSTellopyNode(object):
         height = msg.height
         vyaw = msg.vyaw
 
-        # height_error = 0 # TODO self._state_msg.height - height
-        # vz = np.clip(-1. * height_error, -0.2, 0.2)
-        vz = height # TODO
+        height_error = self._state_msg.height - height
+        vz = np.clip(-1. * height_error, -0.2, 0.2)
 
         with self._tello_lock:
-            self._tello.set_pitch(int(100 * vx))
-            self._tello.set_roll(int(100 * vy))
-            self._tello.set_throttle(int(100 * vz)) # TODO
-            self._tello.set_yaw(int(100 * vyaw))
+            self._tello.send_rc_control(forward_backward_velocity=int(100 * vx),
+                                        left_right_velocity=int(100 * vy),
+                                        up_down_velocity=int(100 * vz),
+                                        yaw_velocity=int(100 * vyaw))
 
     def _video_thread(self):
-        container = av.open(self._tello.get_video_stream())
+        container = av.open(self._tello.get_udp_video_address())
 
         frame_skip = 300
         seq = 0
@@ -141,48 +137,48 @@ class ROSTellopyNode(object):
 
                 seq += 1
 
-    def _flight_data_callback_fn(self, event, sender, data, **args):
-        self._flight_data = data
+    def _state_callback_fn(self, response):
+        try:
+            names_and_value_strs = ' '.join(response.replace(';', ' ').split()).split()
+            d = dict()
+            for name_and_value_str in names_and_value_strs:
+                name, value_str = name_and_value_str.split(':')
+                value = float(value_str)
+                d[name] = value
 
-    def _log_data_callback_fn(self, event, sender, data, **args):
-        self._log_data = data
+            # convert to metric
+            state = {
+                'acceleration': 0.01 * np.array([d['agx'], d['agy'], d['agz']]),
+                'velocity': 0.01 * np.array([d['vgx'], d['vgy'], d['vgz']]),
+                'rpy': np.deg2rad(np.array([d['roll'], d['pitch'], d['yaw']])),
+                'battery': d['bat'],
+                'barometer': 0.01 * d['baro'],
+                'height': 0.01 * d['tof'] if d['tof'] < 6550 else 0.,
+            }
 
-        if self._flight_data is None or self._log_data is None:
-            return
+            state_msg = TelloState(
+                acceleration=Vector3(*state['acceleration']),
+                velocity=Vector3(*state['velocity']),
+                rpy=RollPitchYaw(*state['rpy']),
+                battery=state['battery'],
+                barometer=state['barometer'],
+                height=state['height']
+            )
+            state_msg.header.stamp = rospy.Time.now()
+            state_msg.header.seq = self._state_seq
+            self._state_msg = state_msg
+            self._state_pub.publish(state_msg)
 
-        state_msg = TelloState()
-
-        flight_data_msg = state_msg.flight_data
-        for k, v in self._flight_data.__dict__.items():
-            if hasattr(flight_data_msg, k):
-                setattr(flight_data_msg, k, int(v))
-
-        mvo_msg = state_msg.mvo
-        for k, v in self._log_data.mvo.__dict__.items():
-            if hasattr(mvo_msg, k):
-                setattr(mvo_msg, k, float(v))
-
-        imu_msg = state_msg.imu
-        for k, v in self._log_data.imu.__dict__.items():
-            if hasattr(imu_msg, k):
-                setattr(imu_msg, k, float(v))
-
-        state_msg.header.stamp = rospy.Time.now()
-        state_msg.header.seq = self._state_seq
-        self._state_msg = state_msg
-        self._state_pub.publish(state_msg)
-
-        self._state_seq += 1
+            self._state_seq += 1
+        except Exception:
+            pass
 
     ###########
     ### Run ###
     ###########
 
     def run(self):
-        rate = rospy.Rate(2.)
-        while not rospy.is_shutdown():
-            rate.sleep()
-        self._tello.quit()
+        rospy.spin()
 
 
 rospy.init_node('ROSTello', anonymous=True)
