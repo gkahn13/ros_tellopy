@@ -5,6 +5,7 @@ import numpy as np
 import threading
 import time
 
+from geometry_msgs.msg import Vector3
 import rospy
 import ros_numpy
 from sensor_msgs.msg import Image
@@ -39,7 +40,7 @@ class ROSTellopyNode(object):
         self._log_data = None
         self._tello_lock = threading.RLock()
         self._tello = Tello()
-        self._tello.set_loglevel(Tello.LOG_ERROR)
+        # self._tello.set_loglevel(Tello.LOG_ERROR)
         self._tello.subscribe(Tello.EVENT_FLIGHT_DATA, self._flight_data_callback_fn) # slow
         self._tello.subscribe(Tello.EVENT_LOG_DATA, self._log_data_callback_fn)  # fast
         self._tello.connect()
@@ -52,12 +53,6 @@ class ROSTellopyNode(object):
         video_thread = threading.Thread(target=self._video_thread)
         video_thread.daemon = True
         video_thread.start()
-
-    @property
-    def _tello_height(self):
-        if self._flight_data is None:
-            return None
-        return 0.1 * self._flight_data.height
 
     ###################
     ### ROS threads ###
@@ -89,7 +84,7 @@ class ROSTellopyNode(object):
 
     @property
     def _default_cmd(self):
-        return CmdTello(vx=0., vy=0., vyaw=0., height=0.3)
+        return CmdTello(vx=0., vy=0., vyaw=0., height=0.0) # TODO
 
     def _cmd_thread(self):
         rate = rospy.Rate(0.25)
@@ -110,20 +105,14 @@ class ROSTellopyNode(object):
         height = msg.height
         vyaw = msg.vyaw
 
-        curr_height = self._tello_height
-        if curr_height is None:
-            vz = 0
-        else:
-            height_error = curr_height - height
-            if abs(height_error) <= 0.2:
-                vz = 0
-            else:
-                vz = np.clip(-0.1 * height_error, -0.2, 0.2)
+        # height_error = 0 # TODO self._state_msg.height - height
+        # vz = np.clip(-1. * height_error, -0.2, 0.2)
+        vz = height # TODO
 
         with self._tello_lock:
             self._tello.set_pitch(int(100 * vx))
             self._tello.set_roll(int(100 * vy))
-            self._tello.set_throttle(int(100 * vz))
+            self._tello.set_throttle(int(100 * vz)) # TODO
             self._tello.set_yaw(int(100 * vyaw))
 
     def _video_thread(self):
