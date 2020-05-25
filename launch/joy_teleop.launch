@@ -1,5 +1,8 @@
 <launch>
   <arg name="joy_dev" default="/dev/input/js0" />
+  <arg name="drone_type" />
+  <arg name="use_joy" default="True" />
+  <arg name="collect_data" default="False" />
 
   <node pkg="joy" type="joy_node" name="joy_node">
     <param name="dev" value="$(arg joy_dev)" />
@@ -7,5 +10,8 @@
   </node>
 
   <node pkg="ros_tellopy" type="joy_teleop_node.py" name="joy_teleop" output="screen"/>
+    <param name="drone_type" value="$(arg drone_type)" />
+    <param name="use_joy" value="$(arg use_joy)" />
+    <param name="collect_data" value="$(arg collect_data)" />
 
 </launch>
