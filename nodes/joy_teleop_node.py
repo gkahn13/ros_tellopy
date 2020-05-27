@@ -72,6 +72,11 @@ class JoyTeleopNode(object):
 				                                   ('states/ardrone3/PilotingState/AttitudeChanged', Ardrone3PilotingStateAttitudeChanged),
 				                                   ('states/ardrone3/PilotingState/AirSpeedChanged', Ardrone3PilotingStateAirSpeedChanged),
 				                                   ('states/ardrone3/CameraState/OrientationV2',     Ardrone3CameraStateOrientationV2),])
+				self._ros_msgs['states/ardrone3/PilotingState/FlyingStateChanged'] = Ardrone3PilotingStateFlyingStateChanged
+				self._ros_msgs['states/ardrone3/PilotingState/SpeedChanged'] = Ardrone3PilotingStateSpeedChanged
+				self._ros_msgs['states/ardrone3/PilotingState/AttitudeChanged'] = Ardrone3PilotingStateAttitudeChanged
+				self._ros_msgs['states/ardrone3/PilotingState/AirSpeedChanged'] = Ardrone3PilotingStateAirSpeedChanged
+				self._ros_msgs['states/ardrone3/CameraState/OrientationV2'] = Ardrone3CameraStateOrientationV2
 			for topic, type in self._ros_topics_and_types.items():
 				rospy.Subscriber(topic, type, self.ros_msg_update, (topic,))
 
