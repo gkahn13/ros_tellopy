@@ -3,15 +3,20 @@
 import av
 import numpy as np
 import threading
+import sys
 import time
 
 from geometry_msgs.msg import Vector3
 import rospy
 import ros_numpy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import Empty, Float32
 
 from ros_tellopy.msg import CmdTello, RollPitchYaw, TelloState
+
+from cv_bridge import CvBridge
+sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
+
 from dji_tellopy import Tello
 
 
@@ -21,7 +26,9 @@ class ROSTellopyNode(object):
         self._min_cmd_dt = 1. / min_cmd_freq
 
         ### ROS publishers
-        self._camera_pub = rospy.Publisher('camera', Image, queue_size=1)
+        self._camera_pub = rospy.Publisher('camera', CompressedImage, queue_size=1)
+        self._camera_raw_pub = rospy.Publisher('camera_raw', Image, queue_size=1)
+        self._bridge = CvBridge()
         self._state_msg = TelloState()
         self._state_seq = 0
         self._state_pub = rospy.Publisher('state', TelloState, queue_size=1)
@@ -122,10 +129,16 @@ class ROSTellopyNode(object):
                     frame_skip = frame_skip - 1
                     continue
                 start_time = time.time()
+                image_msg_time = rospy.Time.now()
 
                 image = np.array(frame.to_image())
                 image_msg = ros_numpy.msgify(Image, image, encoding='rgb8')
-                image_msg.header.stamp = rospy.Time.now()
+                image_msg.header.stamp = image_msg_time
+                image_msg.header.seq = seq
+                self._camera_raw_pub.publish(image_msg)
+
+                image_msg = self._bridge.cv2_to_compressed_imgmsg(image)
+                image_msg.header.stamp = image_msg_time
                 image_msg.header.seq = seq
                 self._camera_pub.publish(image_msg)
 
@@ -139,6 +152,7 @@ class ROSTellopyNode(object):
 
     def _state_callback_fn(self, response):
         try:
+            response = response.decode("utf-8")
             names_and_value_strs = ' '.join(response.replace(';', ' ').split()).split()
             d = dict()
             for name_and_value_str in names_and_value_strs:

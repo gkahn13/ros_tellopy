@@ -40,8 +40,8 @@ class JoyTeleopNode(object):
 
         cmd = CmdTello()
         cmd.vx = msg.axes[JoyTeleopNode.RIGHT_AXIS_Y]
-        cmd.vy = -msg.axes[JoyTeleopNode.RIGHT_AXIS_X]
-        cmd.vyaw = -msg.axes[JoyTeleopNode.LEFT_AXIS_X]
+        cmd.vyaw = -msg.axes[JoyTeleopNode.RIGHT_AXIS_X]
+        cmd.vy = -msg.axes[JoyTeleopNode.LEFT_AXIS_X]
         dheight = 0.1 * msg.axes[JoyTeleopNode.LEFT_AXIS_Y]
         cmd.height = self._des_height = np.clip(self._des_height + dheight, *self._height_lims)
 
